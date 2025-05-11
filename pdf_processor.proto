@@ -1,0 +1,27 @@
+
+syntax = "proto3";
+
+package pdf_processor;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+
+service PdfProcessor {
+    rpc ProcessPdf(PdfRequest) returns (PdfStructResponse) {}
+    rpc HealthCheck(google.protobuf.Empty) returns (HealthCheckResponse) {}
+}
+
+message PdfRequest {
+    bytes pdf_data = 1;
+    string filename = 2;
+}
+
+message PdfStructResponse {
+    google.protobuf.Struct data = 1;
+    string message = 2;
+    bool success = 3;
+}
+
+message HealthCheckResponse {
+    string status = 1;
+}

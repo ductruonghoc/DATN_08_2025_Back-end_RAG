@@ -1,17 +1,24 @@
 import os
+import shutil
 import argparse
 import tempfile
 from concurrent import futures
 from typing import Dict, Any
+import json
+import subprocess
 
 import grpc
-from google.protobuf import empty_pb2
-import psycopg2
-from pgvector.psycopg2 import register_vector
+from google.protobuf import json_format, empty_pb2
+from google.protobuf.struct_pb2 import Struct
 from dotenv import load_dotenv
 
-# Import the PDF processing functionality from main2.py
-from extract_pdf import extract_pdf, embed_chunks
+import logging
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 # Load environment variables
 load_dotenv()
@@ -22,35 +29,55 @@ syntax = "proto3";
 
 package pdf_processor;
 
-service PdfProcessor {
-  rpc ProcessPdf(PdfRequest) returns (PdfResponse) {}
-  rpc HealthCheck(Empty) returns (HealthCheckResponse) {}
-}
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
 
-message Empty {}
+service PdfProcessor {
+    rpc ProcessPdf(PdfRequest) returns (PdfStructResponse) {}
+    rpc HealthCheck(google.protobuf.Empty) returns (HealthCheckResponse) {}
+}
 
 message PdfRequest {
-  bytes pdf_data = 1;
-  string filename = 2;
+    bytes pdf_data = 1;
+    string filename = 2;
 }
 
-message PdfResponse {
-  int32 chunks_processed = 1;
-  string message = 2;
-  bool success = 3;
+message PdfStructResponse {
+    google.protobuf.Struct data = 1;
+    string message = 2;
+    bool success = 3;
 }
 
 message HealthCheckResponse {
-  string status = 1;
+    string status = 1;
 }
 """
 
-# Write the proto file to disk
-with open('pdf_processor.proto', 'w') as f:
-    f.write(proto_content)
+def compile_proto():
+    """Compile the proto file and ensure it succeeds"""
+    # Write the proto file to disk
+    with open('pdf_processor.proto', 'w') as f:
+        f.write(proto_content)
+    
+    # Compile using subprocess to check for errors
+    try:
+        result = subprocess.run(
+            'python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. pdf_processor.proto',
+            shell=True,
+            check=True,
+            text=True,
+            capture_output=True
+        )
+        logging.info("Proto compilation succeeded")
+        return True
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Proto compilation failed: {e.stderr}")
+        return False
 
 # Compile the proto file
-os.system('python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. pdf_processor.proto')
+if not compile_proto():
+    logging.error("Failed to compile proto file. Exiting.")
+    exit(1)
 
 # Import the generated gRPC modules
 import pdf_processor_pb2
@@ -58,135 +85,98 @@ import pdf_processor_pb2_grpc
 
 # Constants
 MAX_MESSAGE_LENGTH = 100 * 1024 * 1024  # 100MB
-DB_CONFIG: Dict[str, str] = {
-    'dbname': os.getenv("DB_NAME"),
-    'user': os.getenv("DB_USER"),
-    'password': os.getenv("DB_PASSWORD"),
-    'host': os.getenv("DB_HOST"),
-    'port': os.getenv("DB_PORT")
-}
-
 
 class PdfProcessorServicer(pdf_processor_pb2_grpc.PdfProcessorServicer):
     """Implementation of the PdfProcessor service."""
-
     def ProcessPdf(self, request, context):
-        """
-        Process a PDF file sent as a byte stream, extract text chunks, and embed them.
-        
-        Args:
-            request: The gRPC request containing the PDF file data
-            context: The gRPC context
-            
-        Returns:
-            A PdfResponse message with the processing results
-        """
+        """Process PDF and return structured data response"""
+        logging.info(f"Processing PDF: {request.filename}")
         try:
-            # Create a temporary file to store the PDF
+            from extract_pdf import DocumentProcessor
+            
+            # Create and write to temporary file
+            logging.info("Creating temporary file for PDF data")
             with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
-                temp_file_path = temp_file.name
                 temp_file.write(request.pdf_data)
+                temp_file_path = temp_file.name
+
+            logging.info(f"Creating temporary image directory for images")
+            temp_image_path = tempfile.mkdtemp(suffix='_images')
             
-            print(f"Received PDF file: {request.filename}")
-            print(f"Saved to temporary file: {temp_file_path}")
+            logging.info(f"PDF saved to temporary file: {temp_file_path}")
+            logging.info(f"Temporary image directory: {temp_image_path}")
+            # Process the PDF
+            processor = DocumentProcessor()
+            dict_result = processor.process(temp_file_path, temp_image_path)
             
-            # Process the PDF using the existing functionality
-            chunks = extract_pdf(temp_file_path)
-            print(f"Extracted {len(chunks)} chunks from the PDF")
+            # Validate result
+            if dict_result is None:
+                error_message = "Processing returned None result"
+                logging.error(error_message)
+                context.set_code(grpc.StatusCode.INTERNAL)
+                context.set_details(error_message)
+                return pdf_processor_pb2.PdfStructResponse(
+                    message=error_message,
+                    success=False
+                )
             
-            # Embed the chunks and store in the database
-            embed_chunks(chunks)
-            print("Embeddings successfully stored in the database")
+            # Log the structure for debugging
+            logging.debug(f"Processing result structure: {type(dict_result)}")
             
-            # Clean up the temporary file
-            os.unlink(temp_file_path)
+            # Convert Python dict to Protobuf Struct
+            struct_data = Struct()
+            json_format.ParseDict(dict_result, struct_data)
             
-            # Return the response
-            return pdf_processor_pb2.PdfResponse(
-                chunks_processed=len(chunks),
-                message=f"Successfully processed {request.filename} and extracted {len(chunks)} chunks",
+            logging.info(f"Successfully processed {request.filename}")
+            return pdf_processor_pb2.PdfStructResponse(
+                data=struct_data,
+                message=f"Successfully processed {request.filename}",
                 success=True
             )
             
-        except Exception as e:
-            error_message = f"Failed to process PDF: {str(e)}"
-            print(error_message)
-            return pdf_processor_pb2.PdfResponse(
-                chunks_processed=0,
+        except json_format.ParseError as e:
+            error_message = f"Error converting data to Protobuf: {str(e)}"
+            logging.error(error_message)
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(error_message)
+            return pdf_processor_pb2.PdfStructResponse(
                 message=error_message,
                 success=False
             )
-    
+        except Exception as e:
+            error_message = f"Failed to process PDF: {str(e)}"
+            logging.error(error_message)
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(error_message)
+            return pdf_processor_pb2.PdfStructResponse(
+                message=error_message,
+                success=False
+            )
+        finally:
+             if temp_file_path:
+                try:
+                    os.unlink(temp_file_path)
+                    shutil.rmtree(temp_image_path)
+                except OSError as e:
+                    logging.error(f"Error deleting temp file: {e}")
+            
     def HealthCheck(self, request, context):
-        """
-        Perform a health check to verify the service is running and can connect to the database.
-        
-        Args:
-            request: Empty request
-            context: The gRPC context
-            
-        Returns:
-            A HealthCheckResponse with the service status
-        """
+        logging.info("Health check requested")
         try:
-            # Test database connection
-            with psycopg2.connect(**DB_CONFIG) as conn:
-                register_vector(conn)
-                with conn.cursor() as cursor:
-                    cursor.execute("SELECT 1")
-                    cursor.fetchone()
-            
             return pdf_processor_pb2.HealthCheckResponse(
                 status="healthy"
             )
         except Exception as e:
+            error_message = f"Error in health check: {str(e)}"
+            logging.error(error_message)
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(error_message)
             return pdf_processor_pb2.HealthCheckResponse(
                 status=f"unhealthy: {str(e)}"
             )
 
-
-def verify_db_connection():
-    """Verify database connection and required tables exist."""
-    try:
-        with psycopg2.connect(**DB_CONFIG) as conn:
-            register_vector(conn)
-            with conn.cursor() as cursor:
-                # Check if embeddings table exists
-                cursor.execute("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE table_name = 'embeddings'
-                    )
-                """)
-                table_exists = cursor.fetchone()[0]
-                
-                if not table_exists:
-                    # Create the embeddings table with pgvector extension
-                    cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
-                    cursor.execute("""
-                        CREATE TABLE embeddings (
-                            id UUID PRIMARY KEY,
-                            doc_fragment TEXT NOT NULL,
-                            metadata JSONB,
-                            embedding vector(768)
-                        )
-                    """)
-                    print("Created embeddings table")
-                else:
-                    print("Found existing embeddings table")
-            conn.commit()
-        return True
-    except Exception as e:
-        print(f"Database verification failed: {e}")
-        return False
-
-
 def serve(port):
     """Start the gRPC server."""
-    # Verify database connection before starting server
-    if not verify_db_connection():
-        print("Failed to connect to database or create required tables. Exiting.")
-        return
     
     # Create a gRPC server with increased message size limit
     server_options = [
@@ -206,12 +196,13 @@ def serve(port):
     # Start the server
     server.add_insecure_port(f'[::]:{port}')
     server.start()
-    print(f"Server started on port {port}")
+    logging.info(f"Server started on port {port}")
     
     try:
         server.wait_for_termination()
     except KeyboardInterrupt:
-        print("Server shutting down")
+        logging.info("Server shutting down")
+        server.stop(0)
 
 
 if __name__ == "__main__":

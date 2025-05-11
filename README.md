@@ -6,3 +6,6 @@
     python pdf-grpc-server.py --port 50051
  - Start client and send pdf file:
     python pdf-grpc-client.py --server localhost:50051 path/to/your/document.pdf
+
+ - PROJECT_ID: extract-pdf-459510
+ - PROJECT_NUMBER: 649784283504
