@@ -1,20 +1,29 @@
-FROM continuumio/miniconda3:latest
+# Use an official Python runtime as the base image
+FROM python:3.10-slim
 
+# Set the working directory in the container
 WORKDIR /app
 
-# Copy environment file first for caching
-COPY environment.yml .
+# Install system dependencies required for gRPC and PDF processing
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    python3-dev \
+    poppler-utils \
+    libpoppler-cpp-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy the rest of the files
+# Copy requirements first to leverage Docker cache
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the entire application
 COPY . .
 
-# Create the Conda environment
-RUN conda env create -f environment.yml
+# Expose the gRPC server port
+EXPOSE 50051
 
-# RUN commands use the new environment
-SHELL ["conda", "run", "-n", "myenv", "/bin/bash", "-c"]
-
-COPY . .
-
-# Activate environment and run your app
-CMD ["conda", "run", "--no-capture-output", "-n", "myenv", "python", "pdf-grpc-server.py"]
+# Command to run the gRPC server
+CMD ["python", "pdf-grpc-server.py"]
