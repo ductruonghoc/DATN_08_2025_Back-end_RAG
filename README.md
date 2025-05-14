@@ -78,21 +78,29 @@
     - **Success**
       - `data`(struct): a JSON like format, contain information extract from the PDF
       ```json
+      {
           "data": {"key": "value"},
           "message": "Success",
           "success": true
+      }
       ```
     - **Failture**
       ```json
+      {
           "message": "<error_message>",
           "success": false
+      }
       ```
  - **API Method name**: `HealthCheck`
     - **Success**
       ```json
+      {
           "status": "healthy"
+      }
       ```
     - **Failture**
       ```json
+      {
           "status": "unhealthy: <error_message>"
+      }
       ```
