@@ -87,7 +87,7 @@
           "message": "<error_message>",
           "success": false
       ```
- - **API Method name**: "HealthCheck"
+ - **API Method name**: `HealthCheck`
     - **Success**
       ```json
           "status": "healthy"
