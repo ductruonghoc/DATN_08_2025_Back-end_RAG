@@ -23,62 +23,6 @@ logging.basicConfig(
 # Load environment variables
 load_dotenv()
 
-# Define the proto file for our gRPC service
-proto_content = """
-syntax = "proto3";
-
-package pdf_processor;
-
-import "google/protobuf/empty.proto";
-import "google/protobuf/struct.proto";
-
-service PdfProcessor {
-    rpc ProcessPdf(PdfRequest) returns (PdfStructResponse) {}
-    rpc HealthCheck(google.protobuf.Empty) returns (HealthCheckResponse) {}
-}
-
-message PdfRequest {
-    bytes pdf_data = 1;
-    string filename = 2;
-}
-
-message PdfStructResponse {
-    google.protobuf.Struct data = 1;
-    string message = 2;
-    bool success = 3;
-}
-
-message HealthCheckResponse {
-    string status = 1;
-}
-"""
-
-def compile_proto():
-    """Compile the proto file and ensure it succeeds"""
-    # Write the proto file to disk
-    with open('pdf_processor.proto', 'w') as f:
-        f.write(proto_content)
-    
-    # Compile using subprocess to check for errors
-    try:
-        result = subprocess.run(
-            'python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. pdf_processor.proto',
-            shell=True,
-            check=True,
-            text=True,
-            capture_output=True
-        )
-        logging.info("Proto compilation succeeded")
-        return True
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Proto compilation failed: {e.stderr}")
-        return False
-
-# Compile the proto file
-if not compile_proto():
-    logging.error("Failed to compile proto file. Exiting.")
-    exit(1)
-
 # Import the generated gRPC modules
 import pdf_processor_pb2
 import pdf_processor_pb2_grpc
@@ -87,9 +31,7 @@ import pdf_processor_pb2_grpc
 MAX_MESSAGE_LENGTH = 100 * 1024 * 1024  # 100MB
 
 class PdfProcessorServicer(pdf_processor_pb2_grpc.PdfProcessorServicer):
-    """Implementation of the PdfProcessor service."""
     def ProcessPdf(self, request, context):
-        """Process PDF and return structured data response"""
         logging.info(f"Processing PDF: {request.filename}")
         try:
             from extract_pdf import DocumentProcessor
@@ -175,8 +117,11 @@ class PdfProcessorServicer(pdf_processor_pb2_grpc.PdfProcessorServicer):
                 status=f"unhealthy: {str(e)}"
             )
 
-def serve(port):
+
+def serve():
     """Start the gRPC server."""
+    port = int(os.environ.get("PORT", '50051'))
+    logging.info(f"Starting server on port {port}")
     
     # Create a gRPC server with increased message size limit
     server_options = [
@@ -206,10 +151,4 @@ def serve(port):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="gRPC server for PDF processing")
-    parser.add_argument(
-        "--port", type=int, default=50051,
-        help="Port for the gRPC server (default: 50051)"
-    )
-    args = parser.parse_args()
-    serve(args.port)
+    serve()

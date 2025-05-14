@@ -1,5 +1,6 @@
 docling==2.31.0
 docling_core==2.30.0
 grpcio==1.71.0
-protobuf==6.30.2
+grpcio-tools==1.70.0 
+protobuf==5.29.3
 python-dotenv==1.1.0
