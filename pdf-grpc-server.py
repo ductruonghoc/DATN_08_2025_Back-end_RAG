@@ -5,6 +5,7 @@ import tempfile
 from concurrent import futures
 from typing import Dict, Any
 import json
+import subprocess
 
 import grpc
 from google.protobuf import json_format, empty_pb2
@@ -24,15 +25,13 @@ load_dotenv()
 
 # Import the generated gRPC modules
 import pdf_processor_pb2
-import pdf_processor_pb2_grpcW
+import pdf_processor_pb2_grpc
 
 # Constants
 MAX_MESSAGE_LENGTH = 100 * 1024 * 1024  # 100MB
 
 class PdfProcessorServicer(pdf_processor_pb2_grpc.PdfProcessorServicer):
-    """Implementation of the PdfProcessor service."""
     def ProcessPdf(self, request, context):
-        """Process PDF and return structured data response"""
         logging.info(f"Processing PDF: {request.filename}")
         try:
             from extract_pdf import DocumentProcessor
@@ -118,8 +117,11 @@ class PdfProcessorServicer(pdf_processor_pb2_grpc.PdfProcessorServicer):
                 status=f"unhealthy: {str(e)}"
             )
 
-def serve(port):
+
+def serve():
     """Start the gRPC server."""
+    port = int(os.environ.get("PORT", '50051'))
+    logging.info(f"Starting server on port {port}")
     
     # Create a gRPC server with increased message size limit
     server_options = [
@@ -149,10 +151,4 @@ def serve(port):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="gRPC server for PDF processing")
-    parser.add_argument(
-        "--port", type=int, default=50051,
-        help="Port for the gRPC server (default: 50051)"
-    )
-    args = parser.parse_args()
-    serve(args.port)
+    serve()
