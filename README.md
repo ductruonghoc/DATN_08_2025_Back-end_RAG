@@ -9,7 +9,7 @@
 - [Server setup and deployment](#server-setup-and-deployment)
   - [Local deployment setup](#local-deployment-setup)
   - [Cloud Run deployment steps](#cloud-run-deployment-steps)
-- []
+- [Client API guide](#client-api-guide)
 ## Overview
 
 - **Purpose:** This is a backend server responsible for receiving PDF files, extracting text and images, and returning the results in JSON format.
