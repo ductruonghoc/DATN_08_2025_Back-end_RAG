@@ -72,7 +72,7 @@
   - **Request Format:**
     ```json
     {
-       "pdf_data": "<base64_or_binary>",
+       "pdf_data": "<base64_encoded_string>",
        "filename": "doc.pdf"
     }
     ```
